@@ -111,12 +111,16 @@ export default function App() {
 
   useEffect(() => {
     const init = async () => {
+      if (!session) {
+        setIsLoading(false);
+        return;
+      }
       setIsLoading(true);
       await Promise.all([fetchTasks(), fetchReminders()]);
       setIsLoading(false);
     };
     init();
-  }, []);
+  }, [session]);
 
   // Preload mini-tasks for tasks that have mini_tasks_total > 0
   useEffect(() => {
