@@ -1,0 +1,7 @@
+{
+  "name": "Personal AI Task Partner",
+  "description": "A focused assistant for everyday life and work. Record tasks, set separate nudging reminders, and request optional AI mini-task breakdowns.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
