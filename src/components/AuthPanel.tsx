@@ -19,7 +19,15 @@ export const AuthPanel: React.FC = () => {
     setMessage('');
     const result = mode === 'sign_in'
       ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password });
+      : await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            // Keep email verification inside the deployed application rather
+            // than using a dashboard/default redirect from another project.
+            emailRedirectTo: window.location.origin,
+          },
+        });
     setBusy(false);
     if (result.error) setMessage(result.error.message);
     else if (mode === 'sign_up' && !result.data.session) setMessage('Check your email to confirm your account.');
