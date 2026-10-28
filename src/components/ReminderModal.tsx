@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Bell, Clock, Calendar, Volume2, Trash2, Check, AlertCircle } from 'lucide-react';
 import { Task, ReminderConfig, ReminderFrequency, NudgeTone } from '../types';
+import { apiFetch } from '../lib/api';
 
 interface ReminderModalProps {
   isOpen: boolean;
@@ -39,7 +40,7 @@ export const ReminderModal: React.FC<ReminderModalProps> = ({
     if (isOpen && task) {
       setError('');
       setIsLoading(true);
-      fetch(`/api/tasks/${task.id}/reminder`)
+      apiFetch(`/api/tasks/${task.id}/reminder`)
         .then((res) => res.json())
         .then((data) => {
           if (data.reminder) {

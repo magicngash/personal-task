@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Sparkles, ArrowUp, ArrowDown, Trash2, Plus, Check, Clock, RefreshCw, AlertCircle } from 'lucide-react';
 import { Task } from '../types';
+import { apiFetch } from '../lib/api';
 
 interface ProposedItem {
   id: string;
@@ -33,7 +34,7 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
     setIsLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/ai/breakdown', {
+      const res = await apiFetch('/api/ai/breakdown', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

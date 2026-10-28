@@ -19,8 +19,13 @@ import { AIBreakdownModal } from './components/AIBreakdownModal';
 import { ReminderModal } from './components/ReminderModal';
 import { RemindersHub } from './components/RemindersHub';
 import { NudgeAlertBanner } from './components/NudgeAlertBanner';
+import { AuthPanel } from './components/AuthPanel';
+import { apiFetch } from './lib/api';
+import { supabase } from './lib/supabase';
 
 export default function App() {
+  const [authLoading, setAuthLoading] = useState(true);
+  const [session, setSession] = useState<any>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [miniTasksMap, setMiniTasksMap] = useState<Record<string, MiniTask[]>>({});
   const [activeReminders, setActiveReminders] = useState<any[]>([]);
@@ -46,10 +51,26 @@ export default function App() {
     notes?: string;
   } | null>(null);
 
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false);
+      return;
+    }
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthLoading(false);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
   // Fetch all tasks
   const fetchTasks = async () => {
     try {
-      const res = await fetch('/api/tasks');
+      const res = await apiFetch('/api/tasks');
       const data = await res.json();
       if (data.success) {
         setTasks(data.tasks);
@@ -62,7 +83,7 @@ export default function App() {
   // Fetch active reminders list
   const fetchReminders = async () => {
     try {
-      const res = await fetch('/api/reminders/active');
+      const res = await apiFetch('/api/reminders/active');
       const data = await res.json();
       if (data.success) {
         setActiveReminders(data.reminders);
@@ -75,7 +96,7 @@ export default function App() {
   // Fetch mini-tasks for a specific task
   const loadMiniTasks = async (taskId: string) => {
     try {
-      const res = await fetch(`/api/tasks/${taskId}`);
+      const res = await apiFetch(`/api/tasks/${taskId}`);
       const data = await res.json();
       if (data.success && data.task?.mini_tasks) {
         setMiniTasksMap((prev) => ({
@@ -115,7 +136,7 @@ export default function App() {
     due_date?: string;
   }) => {
     if (editingTask) {
-      const res = await fetch(`/api/tasks/${editingTask.id}`, {
+      const res = await apiFetch(`/api/tasks/${editingTask.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(taskData),
@@ -123,7 +144,7 @@ export default function App() {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Failed to update task');
     } else {
-      const res = await fetch('/api/tasks', {
+      const res = await apiFetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(taskData),
@@ -139,7 +160,7 @@ export default function App() {
   const handleDeleteTask = async (taskId: string) => {
     if (!confirm('Are you sure you want to delete this task?')) return;
     try {
-      await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+      await apiFetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
       await Promise.all([fetchTasks(), fetchReminders()]);
     } catch (err) {
       console.error('Error deleting task:', err);
@@ -149,7 +170,7 @@ export default function App() {
   // Update task status
   const handleUpdateTaskStatus = async (taskId: string, status: TaskStatus) => {
     try {
-      await fetch(`/api/tasks/${taskId}`, {
+      await apiFetch(`/api/tasks/${taskId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
@@ -165,7 +186,7 @@ export default function App() {
     const nextStatus: TaskStatus =
       miniTask.status === 'Completed' ? 'In Progress' : 'Completed';
     try {
-      const res = await fetch(`/api/mini-tasks/${miniTask.id}`, {
+      const res = await apiFetch(`/api/mini-tasks/${miniTask.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: nextStatus }),
@@ -183,7 +204,7 @@ export default function App() {
   // Mini-task add
   const handleAddMiniTask = async (taskId: string, title: string) => {
     try {
-      const res = await fetch(`/api/tasks/${taskId}/mini-tasks`, {
+      const res = await apiFetch(`/api/tasks/${taskId}/mini-tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),
@@ -210,7 +231,7 @@ export default function App() {
         }
       }
 
-      await fetch(`/api/mini-tasks/${miniId}`, { method: 'DELETE' });
+      await apiFetch(`/api/mini-tasks/${miniId}`, { method: 'DELETE' });
       if (parentTaskId) {
         await loadMiniTasks(parentTaskId);
       }
@@ -223,7 +244,7 @@ export default function App() {
   // Mini-tasks reorder
   const handleReorderMiniTasks = async (taskId: string, orderIds: string[]) => {
     try {
-      await fetch(`/api/tasks/${taskId}/mini-tasks/reorder`, {
+      await apiFetch(`/api/tasks/${taskId}/mini-tasks/reorder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderIds }),
@@ -239,7 +260,7 @@ export default function App() {
     taskId: string,
     approvedItems: Array<{ title: string; estimatedMinutes?: number }>
   ) => {
-    const res = await fetch(`/api/tasks/${taskId}/mini-tasks/batch`, {
+    const res = await apiFetch(`/api/tasks/${taskId}/mini-tasks/batch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -266,7 +287,7 @@ export default function App() {
       notes?: string;
     }
   ) => {
-    const res = await fetch(`/api/tasks/${taskId}/reminder`, {
+    const res = await apiFetch(`/api/tasks/${taskId}/reminder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
@@ -278,7 +299,7 @@ export default function App() {
 
   // Reminder delete
   const handleDeleteReminder = async (taskId: string) => {
-    await fetch(`/api/tasks/${taskId}/reminder`, { method: 'DELETE' });
+    await apiFetch(`/api/tasks/${taskId}/reminder`, { method: 'DELETE' });
     await Promise.all([fetchTasks(), fetchReminders()]);
   };
 
@@ -324,6 +345,9 @@ export default function App() {
   const outstandingTasksCount = tasks.filter((t) => t.status !== 'Completed').length;
   const inProgressCount = tasks.filter((t) => t.status === 'In Progress').length;
   const completedCount = tasks.filter((t) => t.status === 'Completed').length;
+
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center text-sm text-slate-500">Loading your secure workspace...</div>;
+  if (!session) return <AuthPanel />;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
