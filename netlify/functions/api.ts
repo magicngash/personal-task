@@ -19,12 +19,40 @@ const messageOf = (error: unknown, fallback = 'Unexpected server error.') =>
       ? (error as any).message
       : fallback;
 
+const authFailure = (error: unknown, requestId: string) => {
+  const detail = messageOf(error, 'Supabase Auth returned no user.');
+  const normalized = detail.toLowerCase();
+  const unreachable = normalized.includes('fetch failed') || normalized.includes('econn') || normalized.includes('enotfound') || normalized.includes('timeout');
+  const invalidToken = normalized.includes('jwt') || normalized.includes('token') || normalized.includes('unauthorized') || normalized.includes('invalid');
+  const code = unreachable ? 'AUTH_PROVIDER_UNREACHABLE' : invalidToken ? 'AUTH_TOKEN_REJECTED' : 'AUTH_VERIFICATION_FAILED';
+  const statusCode = unreachable ? 503 : 401;
+  const userMessage = unreachable
+    ? 'The task API could not reach Supabase Auth. Check the Supabase URL, Netlify function environment, DNS, and provider availability.'
+    : invalidToken
+      ? 'Supabase Auth rejected this session token. This usually means the session is stale or the browser and Netlify functions use different Supabase projects.'
+      : 'Supabase Auth could not verify this session.';
+
+  console.error('Authentication verification failed', {
+    requestId,
+    code,
+    detail,
+    supabaseHost: supabaseUrl?.replace(/^https?:\/\//i, '').split('/')[0] || 'missing',
+  });
+  return json(statusCode, {
+    success: false,
+    error: `${userMessage} Reference: ${requestId}`,
+    diagnostic_code: code,
+    request_id: requestId,
+  });
+};
+
 const admin = (): SupabaseClient => {
   if (!supabaseUrl || !supabaseSecret) throw new Error('Supabase server credentials are not configured.');
   return createClient(supabaseUrl, supabaseSecret, { auth: { autoRefreshToken: false, persistSession: false } });
 };
 
 async function authenticate(event: Parameters<Handler>[0]): Promise<{ db: SupabaseClient; user: User } | { error: ReturnType<typeof json> }> {
+  const requestId = event.headers['x-nf-request-id'] || event.headers['x-request-id'] || crypto.randomUUID();
   try {
     const db = admin();
     const header = event.headers.authorization || event.headers.Authorization;
@@ -32,14 +60,11 @@ async function authenticate(event: Parameters<Handler>[0]): Promise<{ db: Supaba
     if (!token) return { error: json(401, { success: false, error: 'Sign in is required.' }) };
     const { data, error } = await db.auth.getUser(token);
     if (error || !data.user) {
-      // Say why, so a project mismatch (token from one Supabase project, function
-      // configured for another) is distinguishable from a genuinely expired session.
-      const reason = error?.message ? ` (${error.message})` : '';
-      return { error: json(401, { success: false, error: `Your session could not be verified${reason}. Sign in again.` }) };
+      return { error: authFailure(error || new Error('No user returned.'), requestId) };
     }
     return { db, user: data.user };
   } catch (error) {
-    return { error: json(500, { success: false, error: messageOf(error, 'Server configuration error.') }) };
+    return { error: authFailure(error, requestId) };
   }
 }
 
@@ -275,5 +300,4 @@ export const handler: Handler = async (event) => {
     return json(500, { success: false, error: messageOf(error) });
   }
 };
-
 
