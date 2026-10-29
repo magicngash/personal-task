@@ -51,6 +51,47 @@ const admin = (): SupabaseClient => {
   return createClient(supabaseUrl, supabaseSecret, { auth: { autoRefreshToken: false, persistSession: false } });
 };
 
+async function runtimeHealth() {
+  const host = supabaseUrl?.replace(/^https?:\/\//i, '').split('/')[0] || null;
+  if (!supabaseUrl || !supabaseSecret) {
+    return json(503, {
+      success: false,
+      diagnostic_code: 'SERVER_SUPABASE_CONFIG_MISSING',
+      supabase_host: host,
+      has_supabase_url: Boolean(supabaseUrl),
+      has_server_key: Boolean(supabaseSecret),
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/settings`, {
+      headers: { apikey: supabaseSecret },
+      signal: controller.signal,
+    });
+    return json(response.ok ? 200 : 503, {
+      success: response.ok,
+      diagnostic_code: response.ok ? 'SUPABASE_AUTH_REACHABLE' : 'SUPABASE_AUTH_REJECTED_SERVER_KEY',
+      supabase_host: host,
+      has_supabase_url: true,
+      has_server_key: true,
+      auth_status: response.status,
+    });
+  } catch (error) {
+    return json(503, {
+      success: false,
+      diagnostic_code: error instanceof Error && error.name === 'AbortError' ? 'SUPABASE_AUTH_TIMEOUT' : 'SUPABASE_AUTH_NETWORK_FAILURE',
+      supabase_host: host,
+      has_supabase_url: true,
+      has_server_key: true,
+      detail: messageOf(error, 'The function could not reach Supabase Auth.'),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function authenticate(event: Parameters<Handler>[0]): Promise<{ db: SupabaseClient; user: User } | { error: ReturnType<typeof json> }> {
   const requestId = event.headers['x-nf-request-id'] || event.headers['x-request-id'] || crypto.randomUUID();
   try {
@@ -138,6 +179,8 @@ function parseBody(event: Parameters<Handler>[0]) {
 
 export const handler: Handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'Content-Type, Authorization' }, body: '' };
+  const requestedRoute = (event.path || '').replace(/^\/\.netlify\/functions\/api/, '').replace(/^\/api/, '') || '/';
+  if (event.httpMethod === 'GET' && requestedRoute === '/health') return runtimeHealth();
   const auth = await authenticate(event);
   if ('error' in auth) return auth.error;
   const { db, user } = auth;
@@ -300,4 +343,3 @@ export const handler: Handler = async (event) => {
     return json(500, { success: false, error: messageOf(error) });
   }
 };
-
