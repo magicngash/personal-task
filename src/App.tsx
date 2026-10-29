@@ -20,7 +20,7 @@ import { ReminderModal } from './components/ReminderModal';
 import { RemindersHub } from './components/RemindersHub';
 import { NudgeAlertBanner } from './components/NudgeAlertBanner';
 import { AuthPanel } from './components/AuthPanel';
-import { apiFetch } from './lib/api';
+import { apiJson } from './lib/api';
 import { supabase } from './lib/supabase';
 
 export default function App() {
@@ -30,7 +30,6 @@ export default function App() {
   const [miniTasksMap, setMiniTasksMap] = useState<Record<string, MiniTask[]>>({});
   const [activeReminders, setActiveReminders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [sessionExpired, setSessionExpired] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'All' | TaskPriority>('All');
   const [activeTab, setActiveTab] = useState<'all' | 'in_progress' | 'breakdowns' | 'reminders' | 'completed'>('all');
@@ -52,10 +51,28 @@ export default function App() {
     notes?: string;
   } | null>(null);
 
-  // Token refreshes create a new session object without changing the signed-in
-  // user. Key data loading on the user id so refreshes do not wipe the screen
-  // and refetch everything.
+  // Identity of the signed-in user. Data loading is keyed on this id rather than on
+  // the session object: Supabase hands out a new session object on every token
+  // refresh and tab refocus, and reacting to that wiped the list and refetched.
   const userId: string | null = session?.user?.id ?? null;
+
+  // Banner messages. Keyed so one successful request cannot clear another's error.
+  type ErrorKey = 'tasks' | 'reminders' | 'action';
+  const [errors, setErrors] = useState<Partial<Record<ErrorKey, string>>>({});
+  const errorMessage = errors.tasks || errors.reminders || errors.action || null;
+
+  const setError = (key: ErrorKey, message: string | null) =>
+    setErrors((prev) => {
+      const next = { ...prev };
+      if (message) next[key] = message;
+      else delete next[key];
+      return next;
+    });
+
+  const reportError = (key: ErrorKey, err: unknown, fallback: string) => {
+    console.error(fallback, err);
+    setError(key, err instanceof Error && err.message ? err.message : fallback);
+  };
 
   useEffect(() => {
     if (!supabase) {
@@ -68,96 +85,96 @@ export default function App() {
     });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
-      if (nextSession) setSessionExpired(false);
       setAuthLoading(false);
     });
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  useEffect(() => {
-    const handleSessionExpired = () => setSessionExpired(true);
-    window.addEventListener('taskpartner:session-expired', handleSessionExpired);
-    return () => window.removeEventListener('taskpartner:session-expired', handleSessionExpired);
-  }, []);
-
-  const restartSignIn = async () => {
-    setSessionExpired(false);
-    // Move to the sign-in screen immediately. The remote sign-out is best
-    // effort; local session state must not leave the user trapped behind the
-    // expired-session banner if the network is unavailable.
-    setSession(null);
-    try {
-      await supabase?.auth.signOut();
-    } catch (error) {
-      console.error('Unable to complete remote sign out:', error);
-    }
-  };
-
-  // Fetch all tasks
+  // Fetch all tasks. The list endpoint already embeds each task's mini-tasks.
   const fetchTasks = async () => {
     try {
-      const res = await apiFetch('/api/tasks');
-      const data = await res.json();
-      if (data.success) {
-        setTasks(data.tasks);
-      }
+      const data = await apiJson('/api/tasks');
+      const list: Task[] = data.tasks || [];
+      setTasks(list);
+      setMiniTasksMap(Object.fromEntries(list.map((t: any) => [t.id, (t.mini_tasks || []) as MiniTask[]])));
+      setError('tasks', null);
     } catch (err) {
-      console.error('Error fetching tasks:', err);
+      reportError('tasks', err, 'Could not load your tasks.');
     }
   };
 
   // Fetch active reminders list
   const fetchReminders = async () => {
     try {
-      const res = await apiFetch('/api/reminders/active');
-      const data = await res.json();
-      if (data.success) {
-        setActiveReminders(data.reminders);
-      }
+      const data = await apiJson('/api/reminders/active');
+      setActiveReminders(data.reminders || []);
+      setError('reminders', null);
     } catch (err) {
-      console.error('Error fetching reminders:', err);
+      reportError('reminders', err, 'Could not load your reminders.');
     }
   };
 
-  // Fetch mini-tasks for a specific task
+  // Re-fetch the mini-tasks of one task (used after reordering)
   const loadMiniTasks = async (taskId: string) => {
     try {
-      const res = await apiFetch(`/api/tasks/${taskId}`);
-      const data = await res.json();
-      if (data.success && data.task?.mini_tasks) {
+      const data = await apiJson(`/api/tasks/${taskId}`);
+      if (data.task?.mini_tasks) {
         setMiniTasksMap((prev) => ({
           ...prev,
           [taskId]: data.task.mini_tasks,
         }));
       }
     } catch (err) {
-      console.error(`Error loading mini tasks for ${taskId}:`, err);
+      reportError('action', err, 'Could not load the steps for this task.');
     }
   };
 
+  const retryLoad = async () => {
+    setError('action', null);
+    setIsLoading(true);
+    await Promise.all([fetchTasks(), fetchReminders()]);
+    setIsLoading(false);
+  };
+
+  // Initial load, and again only when a different user signs in.
   useEffect(() => {
+    let cancelled = false;
     const init = async () => {
       if (!userId) {
+        setTasks([]);
+        setMiniTasksMap({});
+        setActiveReminders([]);
         setIsLoading(false);
         return;
       }
       setIsLoading(true);
       await Promise.all([fetchTasks(), fetchReminders()]);
-      setIsLoading(false);
+      if (!cancelled) setIsLoading(false);
     };
     init();
+    return () => {
+      cancelled = true;
+    };
   }, [userId]);
 
-  // Preload mini-tasks for tasks that have mini_tasks_total > 0
-  useEffect(() => {
-    tasks.forEach((t) => {
-      if ((t.mini_tasks_total || 0) > 0 && !miniTasksMap[t.id]) {
-        loadMiniTasks(t.id);
-      }
-    });
-  }, [tasks]);
+  // Runs a user action, then refreshes data. Failures show in the banner
+  // instead of disappearing into the console.
+  const runAction = async (
+    action: () => Promise<unknown>,
+    refresh: () => Promise<unknown>,
+    fallback: string
+  ) => {
+    try {
+      await action();
+      setError('action', null);
+    } catch (err) {
+      reportError('action', err, fallback);
+      return;
+    }
+    await refresh();
+  };
 
-  // Task creation or update handler
+  // Task creation or update handler (errors are shown by the modal)
   const handleSaveTask = async (taskData: {
     title: string;
     description?: string;
@@ -166,21 +183,15 @@ export default function App() {
     due_date?: string;
   }) => {
     if (editingTask) {
-      const res = await apiFetch(`/api/tasks/${editingTask.id}`, {
+      await apiJson(`/api/tasks/${editingTask.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(taskData),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to update task');
     } else {
-      const res = await apiFetch('/api/tasks', {
+      await apiJson('/api/tasks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(taskData),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to create task');
     }
     await Promise.all([fetchTasks(), fetchReminders()]);
     setEditingTask(null);
@@ -189,124 +200,92 @@ export default function App() {
   // Task deletion handler
   const handleDeleteTask = async (taskId: string) => {
     if (!confirm('Are you sure you want to delete this task?')) return;
-    try {
-      await apiFetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
-      await Promise.all([fetchTasks(), fetchReminders()]);
-    } catch (err) {
-      console.error('Error deleting task:', err);
-    }
+    await runAction(
+      () => apiJson(`/api/tasks/${taskId}`, { method: 'DELETE' }),
+      () => Promise.all([fetchTasks(), fetchReminders()]),
+      'Could not delete the task.'
+    );
   };
 
   // Update task status
   const handleUpdateTaskStatus = async (taskId: string, status: TaskStatus) => {
-    try {
-      await apiFetch(`/api/tasks/${taskId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
-      await fetchTasks();
-    } catch (err) {
-      console.error('Error updating status:', err);
-    }
+    await runAction(
+      () =>
+        apiJson(`/api/tasks/${taskId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ status }),
+        }),
+      fetchTasks,
+      'Could not update the task status.'
+    );
   };
 
   // Mini-task toggle status
   const handleToggleMiniTaskStatus = async (miniTask: MiniTask) => {
     const nextStatus: TaskStatus =
       miniTask.status === 'Completed' ? 'In Progress' : 'Completed';
-    try {
-      const res = await apiFetch(`/api/mini-tasks/${miniTask.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: nextStatus }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        await loadMiniTasks(miniTask.task_id);
-        await fetchTasks();
-      }
-    } catch (err) {
-      console.error('Error toggling mini-task:', err);
-    }
+    await runAction(
+      () =>
+        apiJson(`/api/mini-tasks/${miniTask.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ status: nextStatus }),
+        }),
+      fetchTasks,
+      'Could not update the step.'
+    );
   };
 
   // Mini-task add
   const handleAddMiniTask = async (taskId: string, title: string) => {
-    try {
-      const res = await apiFetch(`/api/tasks/${taskId}/mini-tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        await loadMiniTasks(taskId);
-        await fetchTasks();
-      }
-    } catch (err) {
-      console.error('Error adding mini task:', err);
-    }
+    await runAction(
+      () =>
+        apiJson(`/api/tasks/${taskId}/mini-tasks`, {
+          method: 'POST',
+          body: JSON.stringify({ title }),
+        }),
+      fetchTasks,
+      'Could not add the step.'
+    );
   };
 
   // Mini-task delete
   const handleDeleteMiniTask = async (miniId: string) => {
-    try {
-      // Find parent taskId first
-      let parentTaskId = '';
-      for (const [taskId, list] of Object.entries(miniTasksMap)) {
-        if (list.some((m) => m.id === miniId)) {
-          parentTaskId = taskId;
-          break;
-        }
-      }
-
-      await apiFetch(`/api/mini-tasks/${miniId}`, { method: 'DELETE' });
-      if (parentTaskId) {
-        await loadMiniTasks(parentTaskId);
-      }
-      await fetchTasks();
-    } catch (err) {
-      console.error('Error deleting mini-task:', err);
-    }
+    await runAction(
+      () => apiJson(`/api/mini-tasks/${miniId}`, { method: 'DELETE' }),
+      fetchTasks,
+      'Could not delete the step.'
+    );
   };
 
   // Mini-tasks reorder
   const handleReorderMiniTasks = async (taskId: string, orderIds: string[]) => {
-    try {
-      await apiFetch(`/api/tasks/${taskId}/mini-tasks/reorder`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderIds }),
-      });
-      await loadMiniTasks(taskId);
-    } catch (err) {
-      console.error('Error reordering mini tasks:', err);
-    }
+    await runAction(
+      () =>
+        apiJson(`/api/tasks/${taskId}/mini-tasks/reorder`, {
+          method: 'POST',
+          body: JSON.stringify({ orderIds }),
+        }),
+      () => loadMiniTasks(taskId),
+      'Could not save the new step order.'
+    );
   };
 
-  // Approve AI breakdown proposal
+  // Approve AI breakdown proposal (errors are shown by the modal)
   const handleApproveBreakdown = async (
     taskId: string,
     approvedItems: Array<{ title: string; estimatedMinutes?: number }>
   ) => {
-    const res = await apiFetch(`/api/tasks/${taskId}/mini-tasks/batch`, {
+    await apiJson(`/api/tasks/${taskId}/mini-tasks/batch`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         items: approvedItems,
         replaceExisting: false,
       }),
     });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || 'Failed to save approved breakdown');
-    }
-    await loadMiniTasks(taskId);
     await fetchTasks();
   };
 
-  // Reminder save
+  // Reminder save (errors are shown by the modal)
   const handleSaveReminder = async (
     taskId: string,
     config: {
@@ -317,19 +296,16 @@ export default function App() {
       notes?: string;
     }
   ) => {
-    const res = await apiFetch(`/api/tasks/${taskId}/reminder`, {
+    await apiJson(`/api/tasks/${taskId}/reminder`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
     });
-    const data = await res.json();
-    if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save reminder');
     await Promise.all([fetchTasks(), fetchReminders()]);
   };
 
   // Reminder delete
   const handleDeleteReminder = async (taskId: string) => {
-    await apiFetch(`/api/tasks/${taskId}/reminder`, { method: 'DELETE' });
+    await apiJson(`/api/tasks/${taskId}/reminder`, { method: 'DELETE' });
     await Promise.all([fetchTasks(), fetchReminders()]);
   };
 
@@ -391,27 +367,10 @@ export default function App() {
         }}
         activeReminderCount={activeReminders.length}
         totalTaskCount={tasks.length}
-        onSignOut={restartSignIn}
+        onSignOut={() => {
+          void supabase?.auth.signOut();
+        }}
       />
-
-      {sessionExpired && (
-        <div role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-3">
-          <div className="max-w-7xl mx-auto flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-semibold text-amber-950">Your session has expired</p>
-              <p className="text-xs text-amber-800 mt-0.5">Your data is safe. Sign in again to continue managing tasks and reminders.</p>
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <button type="button" onClick={restartSignIn} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800">
-                Sign in again
-              </button>
-              <button type="button" onClick={restartSignIn} className="text-xs font-semibold text-amber-900 underline underline-offset-2">
-                Sign out
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Live Nudge Alert Toast */}
       <NudgeAlertBanner
@@ -435,12 +394,34 @@ export default function App() {
 
           <div className="flex items-center gap-3 text-xs text-slate-500 font-mono tabular-nums">
             <span>{outstandingTasksCount} Outstanding</span>
-            <span aria-hidden="true">·</span>
+            <span aria-hidden="true">Â·</span>
             <span>{inProgressCount} In Progress</span>
-            <span aria-hidden="true">·</span>
+            <span aria-hidden="true">Â·</span>
             <span>{completedCount} Completed</span>
           </div>
         </div>
+
+        {/* Load / action errors */}
+        {errorMessage && (
+          <div
+            role="alert"
+            className="mb-4 p-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg flex flex-col sm:flex-row sm:items-start justify-between gap-3"
+          >
+            <span className="break-words">{errorMessage}</span>
+            <div className="flex items-center gap-4 shrink-0">
+              <button type="button" onClick={retryLoad} className="font-semibold underline">
+                Retry
+              </button>
+              <button
+                type="button"
+                onClick={() => supabase?.auth.signOut()}
+                className="font-semibold underline"
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Tab View Switcher */}
         {activeTab === 'reminders' ? (
@@ -455,13 +436,18 @@ export default function App() {
             onToggleReminderActive={async (remId, current) => {
               const rem = activeReminders.find((r) => r.id === remId);
               if (rem) {
-                await handleSaveReminder(rem.task_id, {
-                  enabled: !current,
-                  frequency: rem.frequency,
-                  reminder_time: rem.reminder_time,
-                  nudge_tone: rem.nudge_tone || 'balanced',
-                  notes: rem.notes,
-                });
+                try {
+                  await handleSaveReminder(rem.task_id, {
+                    enabled: !current,
+                    frequency: rem.frequency,
+                    reminder_time: rem.reminder_time,
+                    nudge_tone: rem.nudge_tone || 'balanced',
+                    notes: rem.notes,
+                  });
+                  setError('action', null);
+                } catch (err) {
+                  reportError('action', err, 'Could not update the reminder.');
+                }
               }
             }}
           />
@@ -508,6 +494,10 @@ export default function App() {
                 </div>
                 <p className="text-sm font-medium text-slate-700">Loading your tasks...</p>
               </div>
+            ) : filteredTasks.length === 0 && errors.tasks && tasks.length === 0 ? (
+              // The list failed to load: the banner above explains why, so don't
+              // claim the user has no tasks.
+              null
             ) : filteredTasks.length === 0 ? (
               <div className="py-16 text-center rounded-xl border border-dashed border-slate-200 bg-white space-y-3">
                 <Layers className="w-8 h-8 text-slate-300 mx-auto" />
@@ -605,12 +595,12 @@ export default function App() {
       {/* Quiet Footer */}
       <footer className="mt-auto border-t border-slate-200 py-6 bg-white text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p>© {new Date().getFullYear()} Personal AI Task Partner. Uncluttered, user-controlled productivity.</p>
+          <p>Â© {new Date().getFullYear()} Personal AI Task Partner. Uncluttered, user-controlled productivity.</p>
           <div className="flex items-center gap-4 text-slate-400">
             <span>Tasks</span>
-            <span>·</span>
+            <span>Â·</span>
             <span>Priority Nudges</span>
-            <span>·</span>
+            <span>Â·</span>
             <span>On-Demand AI Breakdown</span>
           </div>
         </div>
@@ -618,3 +608,4 @@ export default function App() {
     </div>
   );
 }
+
