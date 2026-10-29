@@ -30,6 +30,7 @@ export default function App() {
   const [miniTasksMap, setMiniTasksMap] = useState<Record<string, MiniTask[]>>({});
   const [activeReminders, setActiveReminders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'All' | TaskPriority>('All');
   const [activeTab, setActiveTab] = useState<'all' | 'in_progress' | 'breakdowns' | 'reminders' | 'completed'>('all');
@@ -67,10 +68,22 @@ export default function App() {
     });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
+      if (nextSession) setSessionExpired(false);
       setAuthLoading(false);
     });
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const handleSessionExpired = () => setSessionExpired(true);
+    window.addEventListener('taskpartner:session-expired', handleSessionExpired);
+    return () => window.removeEventListener('taskpartner:session-expired', handleSessionExpired);
+  }, []);
+
+  const restartSignIn = async () => {
+    setSessionExpired(false);
+    await supabase?.auth.signOut();
+  };
 
   // Fetch all tasks
   const fetchTasks = async () => {
@@ -371,6 +384,25 @@ export default function App() {
         activeReminderCount={activeReminders.length}
         totalTaskCount={tasks.length}
       />
+
+      {sessionExpired && (
+        <div role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="max-w-7xl mx-auto flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-amber-950">Your session has expired</p>
+              <p className="text-xs text-amber-800 mt-0.5">Your data is safe. Sign in again to continue managing tasks and reminders.</p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <button type="button" onClick={restartSignIn} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800">
+                Sign in again
+              </button>
+              <button type="button" onClick={restartSignIn} className="text-xs font-semibold text-amber-900 underline underline-offset-2">
+                Sign out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Live Nudge Alert Toast */}
       <NudgeAlertBanner

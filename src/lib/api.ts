@@ -53,6 +53,10 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
     }
   }
 
+  if (response.status === 401 && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('taskpartner:session-expired'));
+  }
+
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
     throw new Error(`API returned ${response.status} ${response.statusText}, not JSON. Check the Netlify Function deployment.`);
