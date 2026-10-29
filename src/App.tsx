@@ -383,6 +383,7 @@ export default function App() {
         }}
         activeReminderCount={activeReminders.length}
         totalTaskCount={tasks.length}
+        onSignOut={restartSignIn}
       />
 
       {sessionExpired && (

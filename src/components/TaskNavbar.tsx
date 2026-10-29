@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Bell, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Plus, Bell, Sparkles, CheckCircle2, LogOut } from 'lucide-react';
 
 interface TaskNavbarProps {
   activeTab: 'all' | 'in_progress' | 'breakdowns' | 'reminders' | 'completed';
@@ -7,6 +7,7 @@ interface TaskNavbarProps {
   onOpenCreate: () => void;
   activeReminderCount: number;
   totalTaskCount: number;
+  onSignOut: () => void;
 }
 
 export const TaskNavbar: React.FC<TaskNavbarProps> = ({
@@ -15,6 +16,7 @@ export const TaskNavbar: React.FC<TaskNavbarProps> = ({
   onOpenCreate,
   activeReminderCount,
   totalTaskCount,
+  onSignOut,
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200">
@@ -115,6 +117,15 @@ export const TaskNavbar: React.FC<TaskNavbarProps> = ({
                 }}
               />
             </div>
+            <button
+              type="button"
+              onClick={onSignOut}
+              aria-label="Sign out"
+              title="Sign out"
+              className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
