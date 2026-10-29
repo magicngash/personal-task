@@ -51,6 +51,11 @@ export default function App() {
     notes?: string;
   } | null>(null);
 
+  // Token refreshes create a new session object without changing the signed-in
+  // user. Key data loading on the user id so refreshes do not wipe the screen
+  // and refetch everything.
+  const userId: string | null = session?.user?.id ?? null;
+
   useEffect(() => {
     if (!supabase) {
       setAuthLoading(false);
@@ -111,7 +116,7 @@ export default function App() {
 
   useEffect(() => {
     const init = async () => {
-      if (!session) {
+      if (!userId) {
         setIsLoading(false);
         return;
       }
@@ -120,7 +125,7 @@ export default function App() {
       setIsLoading(false);
     };
     init();
-  }, [session]);
+  }, [userId]);
 
   // Preload mini-tasks for tasks that have mini_tasks_total > 0
   useEffect(() => {
