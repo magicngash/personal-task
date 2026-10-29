@@ -82,7 +82,15 @@ export default function App() {
 
   const restartSignIn = async () => {
     setSessionExpired(false);
-    await supabase?.auth.signOut();
+    // Move to the sign-in screen immediately. The remote sign-out is best
+    // effort; local session state must not leave the user trapped behind the
+    // expired-session banner if the network is unavailable.
+    setSession(null);
+    try {
+      await supabase?.auth.signOut();
+    } catch (error) {
+      console.error('Unable to complete remote sign out:', error);
+    }
   };
 
   // Fetch all tasks
