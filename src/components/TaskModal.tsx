@@ -11,6 +11,7 @@ interface TaskModalProps {
     priority: TaskPriority;
     status?: TaskStatus;
     due_date?: string;
+    auto_breakdown?: boolean;
   }) => Promise<void>;
   initialTask?: Task | null;
 }
@@ -26,6 +27,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [priority, setPriority] = useState<TaskPriority>('Normal');
   const [status, setStatus] = useState<TaskStatus>('Not Started');
   const [dueDate, setDueDate] = useState('');
+  const [autoBreakdown, setAutoBreakdown] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -36,12 +38,14 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setPriority(initialTask.priority);
       setStatus(initialTask.status);
       setDueDate(initialTask.due_date || '');
+      setAutoBreakdown(false);
     } else {
       setTitle('');
       setDescription('');
       setPriority('Normal');
       setStatus('Not Started');
       setDueDate('');
+      setAutoBreakdown(false);
     }
     setError('');
   }, [initialTask, isOpen]);
@@ -64,6 +68,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         priority,
         status,
         due_date: dueDate || undefined,
+        auto_breakdown: !initialTask && autoBreakdown,
       });
       onClose();
     } catch (err: any) {
@@ -109,6 +114,21 @@ export const TaskModal: React.FC<TaskModalProps> = ({
               className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:bg-white text-slate-900 placeholder:text-slate-400"
             />
           </div>
+
+          {!initialTask && (
+            <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoBreakdown}
+                onChange={(e) => setAutoBreakdown(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+              />
+              <span>
+                <span className="block text-xs font-semibold text-slate-800">Suggest mini-tasks with DeepSeek after saving</span>
+                <span className="block text-xs text-slate-500 mt-0.5">You will review, edit, add, or delete suggestions before anything is created.</span>
+              </span>
+            </label>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>

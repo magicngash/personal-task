@@ -28,6 +28,7 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
   const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState('');
   const [newStepText, setNewStepText] = useState('');
+  const [provider, setProvider] = useState('deepseek');
 
   const fetchBreakdown = async () => {
     if (!task) return;
@@ -49,6 +50,7 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
         throw new Error(data.error || 'Failed to generate breakdown suggestions.');
       }
       setItems(data.items || []);
+      setProvider(data.provider || 'deepseek');
     } catch (err: any) {
       console.error(err);
       setError(err?.message || 'Unable to connect to AI assistant.');
@@ -64,6 +66,7 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
       setItems([]);
       setError('');
       setNewStepText('');
+      setProvider('deepseek');
     }
   }, [isOpen, task?.id]);
 
@@ -149,7 +152,7 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
           <div>
             <div className="flex items-center gap-2 text-xs font-semibold text-amber-700 mb-1">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>AI Task Breakdown Review</span>
+              <span>{provider === 'fallback' ? 'Draft Task Breakdown Review' : `${provider === 'gemini' ? 'Gemini' : 'DeepSeek'} Task Breakdown Review`}</span>
               <span className="text-slate-400">·</span>
               <span className="text-slate-500 font-normal">Pending Approval</span>
             </div>
@@ -201,7 +204,9 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
                 Analyzing task and generating practical steps...
               </p>
               <p className="text-xs text-slate-400">
-                Breaking down into actionable, sequential mini-tasks.
+                {provider === 'fallback'
+                  ? 'AI is not configured, so these are editable starter suggestions. Nothing is saved until you approve the list.'
+                  : `${provider === 'gemini' ? 'Gemini' : 'DeepSeek'} proposed these steps. Nothing is saved until you approve the edited list.`}
               </p>
             </div>
           ) : items.length === 0 ? (

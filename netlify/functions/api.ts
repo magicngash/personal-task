@@ -177,6 +177,50 @@ function parseBody(event: Parameters<Handler>[0]) {
   try { return event.body ? JSON.parse(event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body) : {}; } catch { return null; }
 }
 
+const breakdownFallback = (title: string) => [
+  { title: `Clarify requirements and supplies for "${title}"`, estimatedMinutes: 15 },
+  { title: 'Prepare workspace, tools, and materials', estimatedMinutes: 20 },
+  { title: 'Complete the main work step', estimatedMinutes: 45 },
+  { title: 'Review quality and finalize', estimatedMinutes: 25 },
+];
+
+function parseBreakdownJson(content: string) {
+  const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const parsed = JSON.parse(cleaned);
+  const items = Array.isArray(parsed) ? parsed : parsed.items;
+  if (!Array.isArray(items)) throw new Error('DeepSeek returned an invalid breakdown format.');
+  return items
+    .map((item: any) => ({
+      title: String(item?.title || '').trim(),
+      estimatedMinutes: Number.isFinite(Number(item?.estimatedMinutes)) ? Number(item.estimatedMinutes) : undefined,
+      tips: item?.tips ? String(item.tips) : undefined,
+    }))
+    .filter((item: any) => item.title)
+    .slice(0, 12);
+}
+
+async function generateDeepSeekBreakdown(body: any) {
+  const response = await fetch('https://api.deepseek.com/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: 'You break personal tasks into practical, sequential mini-tasks. Return only JSON with an items array. Never claim a task is complete.' },
+        { role: 'user', content: `Break this task into 4-8 actionable mini-tasks. Each item must have title, estimatedMinutes, and optional tips. Task: ${body.title}. Description: ${body.description || 'none'}. Priority: ${body.priority || 'Normal'}.` },
+      ],
+    }),
+  });
+  if (!response.ok) throw new Error(`DeepSeek returned HTTP ${response.status}.`);
+  const result: any = await response.json();
+  return parseBreakdownJson(result.choices?.[0]?.message?.content || '');
+}
+
 export const handler: Handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'Content-Type, Authorization' }, body: '' };
   const requestedRoute = (event.path || '').replace(/^\/\.netlify\/functions\/api/, '').replace(/^\/api/, '') || '/';
@@ -329,13 +373,20 @@ export const handler: Handler = async (event) => {
       return json(200, { success: true, reminders });
     }
     if (route === '/ai/breakdown' && event.httpMethod === 'POST') {
-      const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
-      const fallback = [{ title: `Clarify requirements and supplies for "${body.title}"`, estimatedMinutes: 15 }, { title: 'Prepare workspace, tools, and materials', estimatedMinutes: 20 }, { title: 'Complete the main work step', estimatedMinutes: 45 }, { title: 'Review quality and finalize', estimatedMinutes: 25 }];
-      if (!ai) return json(200, { success: true, taskId: body.taskId, taskTitle: body.title, priority: body.priority || 'Normal', items: fallback, isFallback: true });
-      const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: `Return JSON array of 4-7 actionable mini tasks for: ${body.title}. Context: ${body.description || 'none'}. Each item needs title and estimatedMinutes.` });
-      let items: any[] = [];
-      try { items = JSON.parse(response.text?.trim() || '[]'); } catch { items = fallback; }
-      return json(200, { success: true, taskId: body.taskId, taskTitle: body.title, priority: body.priority || 'Normal', items: items.map((item, index) => ({ id: `proposal-${index}`, ...item })) });
+      let items: any[];
+      let provider = 'fallback';
+      if (process.env.DEEPSEEK_API_KEY) {
+        items = await generateDeepSeekBreakdown(body);
+        provider = 'deepseek';
+      } else if (process.env.GEMINI_API_KEY) {
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: `Return JSON array of 4-7 actionable mini tasks for: ${body.title}. Context: ${body.description || 'none'}. Each item needs title and estimatedMinutes.` });
+        try { items = JSON.parse(response.text?.trim() || '[]'); } catch { items = breakdownFallback(body.title); }
+        provider = 'gemini';
+      } else {
+        items = breakdownFallback(body.title);
+      }
+      return json(200, { success: true, taskId: body.taskId, taskTitle: body.title, priority: body.priority || 'Normal', items: items.map((item, index) => ({ id: `proposal-${index}`, ...item })), provider, isFallback: provider === 'fallback' });
     }
     return json(404, { success: false, error: 'API route not found.' });
   } catch (error) {

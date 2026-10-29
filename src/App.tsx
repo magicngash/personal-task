@@ -181,17 +181,23 @@ export default function App() {
     priority: TaskPriority;
     status?: TaskStatus;
     due_date?: string;
+    auto_breakdown?: boolean;
   }) => {
+    const { auto_breakdown, ...payload } = taskData;
     if (editingTask) {
       await apiJson(`/api/tasks/${editingTask.id}`, {
         method: 'PUT',
-        body: JSON.stringify(taskData),
+        body: JSON.stringify(payload),
       });
     } else {
-      await apiJson('/api/tasks', {
+      const data = await apiJson<{ task?: Task }>('/api/tasks', {
         method: 'POST',
-        body: JSON.stringify(taskData),
+        body: JSON.stringify(payload),
       });
+      if (auto_breakdown && data.task) {
+        setBreakdownTask(data.task);
+        setIsBreakdownModalOpen(true);
+      }
     }
     await Promise.all([fetchTasks(), fetchReminders()]);
     setEditingTask(null);
@@ -608,4 +614,3 @@ export default function App() {
     </div>
   );
 }
-
