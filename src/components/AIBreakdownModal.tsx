@@ -29,6 +29,7 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
   const [error, setError] = useState('');
   const [newStepText, setNewStepText] = useState('');
   const [provider, setProvider] = useState('deepseek');
+  const [isEditing, setIsEditing] = useState(false);
 
   const fetchBreakdown = async () => {
     if (!task) return;
@@ -67,6 +68,7 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
       setError('');
       setNewStepText('');
       setProvider('deepseek');
+      setIsEditing(false);
     }
   }, [isOpen, task?.id]);
 
@@ -114,6 +116,19 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
     };
     setItems((prev) => [...prev, newItem]);
     setNewStepText('');
+  };
+
+  const handleInsertStep = (index: number) => {
+    const newItem: ProposedItem = {
+      id: `manual-${Date.now()}-${index}`,
+      title: '',
+      estimatedMinutes: 20,
+    };
+    setItems((prev) => {
+      const copy = [...prev];
+      copy.splice(index + 1, 0, newItem);
+      return copy;
+    });
   };
 
   const handleApproveProposal = async () => {
@@ -233,21 +248,29 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
             <div className="space-y-2.5">
               <div className="flex items-center justify-between text-xs text-slate-500 pb-1">
                 <span>Proposed Steps ({items.length})</span>
-                <button
-                  onClick={fetchBreakdown}
-                  className="hover:text-slate-900 transition-colors inline-flex items-center gap-1"
-                  title="Generate alternative suggestions"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  Regenerate
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setIsEditing((value) => !value)}
+                    className="hover:text-slate-900 transition-colors inline-flex items-center gap-1 font-medium"
+                  >
+                    {isEditing ? 'Done editing' : 'Edit steps'}
+                  </button>
+                  <button
+                    onClick={fetchBreakdown}
+                    className="hover:text-slate-900 transition-colors inline-flex items-center gap-1"
+                    title="Generate alternative suggestions"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Regenerate
+                  </button>
+                </div>
               </div>
 
               {items.map((item, index) => (
-                <div
-                  key={item.id}
-                  className="group flex items-start gap-2.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-slate-300 transition-colors shadow-2xs"
-                >
+                <React.Fragment key={item.id}>
+                  <div
+                    className="group flex items-start gap-2.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-slate-300 transition-colors shadow-2xs"
+                  >
                   {/* Step Number */}
                   <span className="font-mono text-xs font-semibold text-slate-400 mt-2 shrink-0 w-5 text-right">
                     {index + 1}.
@@ -259,8 +282,9 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
                       type="text"
                       value={item.title}
                       onChange={(e) => handleUpdateTitle(item.id, e.target.value)}
+                      disabled={!isEditing}
                       placeholder="Step description..."
-                      className="w-full text-sm font-medium text-slate-900 bg-transparent border-b border-transparent focus:border-slate-400 focus:outline-none py-1"
+                      className="w-full text-sm font-medium text-slate-900 bg-transparent border-b border-transparent focus:border-slate-400 focus:outline-none py-1 disabled:cursor-default"
                     />
                     {item.tips && (
                       <p className="text-xs text-slate-500 mt-0.5 italic">
@@ -277,7 +301,7 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
                   ) : null}
 
                   {/* Reordering & Action Controls */}
-                  <div className="flex items-center gap-0.5 mt-0.5 shrink-0">
+                  {isEditing && <div className="flex items-center gap-0.5 mt-0.5 shrink-0">
                     <button
                       type="button"
                       disabled={index === 0}
@@ -304,14 +328,25 @@ export const AIBreakdownModal: React.FC<AIBreakdownModalProps> = ({
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
+                  </div>}
                   </div>
-                </div>
+                  {isEditing && (
+                    <button
+                      type="button"
+                      onClick={() => handleInsertStep(index)}
+                      className="w-full py-1 text-[11px] text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded-md transition-colors"
+                    >
+                      <Plus className="w-3 h-3 inline-block mr-1" />
+                      Add step here
+                    </button>
+                  )}
+                </React.Fragment>
               ))}
             </div>
           )}
 
           {/* Quick Add Custom Step to Proposal */}
-          {!isLoading && (
+          {!isLoading && isEditing && (
             <form onSubmit={handleAddManualStep} className="pt-2 flex items-center gap-2">
               <input
                 type="text"
